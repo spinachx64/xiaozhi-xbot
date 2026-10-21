@@ -398,6 +398,8 @@ std::string MqttProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "aec", true);
 #endif
     cJSON_AddBoolToObject(features, "mcp", true);
+    // The server waits for speak_done before acknowledging an announcement.
+    cJSON_AddBoolToObject(features, "speak_done", true);
     cJSON_AddItemToObject(root, "features", features);
     AddTextFontCapabilities(root);
     cJSON* audio_params = cJSON_CreateObject();

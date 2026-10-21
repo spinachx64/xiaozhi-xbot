@@ -126,6 +126,8 @@ public:
     bool IsVoiceDetected() const { return voice_detected_; }
     bool IsIdle();
     bool IsPlaybackIdle();
+    // Frames written to the codec since boot (wraps around).
+    uint32_t GetPlaybackCount() const { return debug_statistics_.playback_count; }
     bool IsWakeWordRunning() const {
         return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING;
     }

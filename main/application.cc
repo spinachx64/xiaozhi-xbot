@@ -565,6 +565,9 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+        if (speak_request_active_) {
+            speak_request_packets_++;
+        }
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
@@ -1040,6 +1043,7 @@ void Application::HandleStateChangedEvent() {
             }
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
+            FinishSpeakRequest();
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -1047,6 +1051,7 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            FinishSpeakRequest();
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
@@ -1257,8 +1262,10 @@ void Application::HandleSpeakRequest(const std::string& session_id, bool auto_li
         StopNotification();
         state = kDeviceStateIdle;
     }
-    if (state != kDeviceStateIdle && state != kDeviceStateListening &&
-        state != kDeviceStateSpeaking) {
+    // Only an idle device takes a server announcement. Listening or speaking
+    // means the user is in a conversation (or just pressed the button), and
+    // the announcement would be lost; the server retries once we are idle.
+    if (state != kDeviceStateIdle) {
         ESP_LOGW(TAG, "Speak request rejected in state %d", static_cast<int>(state));
         protocol_->SendSpeakReady(session_id, false, false);
         return;
@@ -1282,12 +1289,31 @@ void Application::HandleSpeakRequest(const std::string& session_id, bool auto_li
             protocol_->SendAudio(std::make_unique<AudioStreamPacket>());
         }
     }
-    if (state == kDeviceStateIdle) {
-        // tts stop returns to idle for one-shot announcements, or keeps
-        // listening when the server wants a follow-up.
-        listening_mode_ = auto_listen ? GetDefaultListeningMode() : kListeningModeManualStop;
-    }
+    // tts stop returns to idle for one-shot announcements, or keeps
+    // listening when the server wants a follow-up.
+    listening_mode_ = auto_listen ? GetDefaultListeningMode() : kListeningModeManualStop;
+    speak_request_session_id_ = session_id;
+    speak_request_packets_ = 0;
+    speak_request_playback_base_ = audio_service_.GetPlaybackCount();
+    speak_request_active_ = true;
     protocol_->SendSpeakReady(session_id, true, reuse);
+}
+
+// Called when the device leaves the announcement (back to idle, or into
+// listening after an interruption). The server acknowledges the result only
+// when frames actually reached the speaker.
+void Application::FinishSpeakRequest() {
+    if (!speak_request_active_) {
+        return;
+    }
+    speak_request_active_ = false;
+    const uint32_t packets = speak_request_packets_;
+    const uint32_t played = audio_service_.GetPlaybackCount() - speak_request_playback_base_;
+    ESP_LOGI(TAG, "Speak done: %lu packets received, %lu frames played",
+             static_cast<unsigned long>(packets), static_cast<unsigned long>(played));
+    if (protocol_) {
+        protocol_->SendSpeakDone(speak_request_session_id_, packets, played);
+    }
 }
 
 void Application::HandleNotificationFinished(uint32_t playback_id, bool success) {

@@ -6,6 +6,7 @@
 #include <freertos/task.h>
 #include <esp_timer.h>
 
+#include <atomic>
 #include <string>
 #include <mutex>
 #include <deque>
@@ -179,6 +180,14 @@ private:
     void StopNotification();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
     void HandleSpeakRequest(const std::string& session_id, bool auto_listen);
+    void FinishSpeakRequest();
+
+    // Server-initiated speech in progress; the counters go into speak_done.
+    // The packet counter is updated from the network task.
+    std::atomic<bool> speak_request_active_{false};
+    std::atomic<uint32_t> speak_request_packets_{0};
+    uint32_t speak_request_playback_base_ = 0;
+    std::string speak_request_session_id_;
 
     // Activation task (runs in background)
     void ActivationTask();

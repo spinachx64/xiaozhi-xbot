@@ -69,6 +69,10 @@ public:
     // Reply to a server speak_request. session_id echoes the request so the
     // server can match it even when a new hello replaced the session.
     virtual void SendSpeakReady(const std::string& session_id, bool ready, bool reuse_existing);
+    // Sent when a server-initiated announcement ends: how many audio packets
+    // arrived and how many frames reached the speaker.
+    virtual void SendSpeakDone(const std::string& session_id, uint32_t packets,
+                               uint32_t played_frames);
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

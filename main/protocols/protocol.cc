@@ -116,6 +116,14 @@ void Protocol::SendSpeakReady(const std::string& session_id, bool ready, bool re
     SendText(message);
 }
 
+void Protocol::SendSpeakDone(const std::string& session_id, uint32_t packets,
+                             uint32_t played_frames) {
+    std::string message = "{\"session_id\":\"" + session_id + "\",\"type\":\"speak_done\"";
+    message += ",\"packets\":" + std::to_string(packets);
+    message += ",\"played_frames\":" + std::to_string(played_frames) + "}";
+    SendText(message);
+}
+
 bool Protocol::IsTimeout() const {
     const int kTimeoutSeconds = 120;
     auto now = std::chrono::steady_clock::now();
