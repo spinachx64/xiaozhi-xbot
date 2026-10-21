@@ -113,6 +113,7 @@ public:
             }
         });
         ApplyFaceStyle();
+        CreateStateMark();
 #if CONFIG_EYES_UI_DEBUG
         xTaskCreate([](void* arg) { static_cast<RoundLcdDisplay*>(arg)->SnapshotLoop(); },
                     "eyes_snap", 6144, this, 1, nullptr);
@@ -143,6 +144,11 @@ public:
     }
 
     void SetChatMessage(const char* role, const char* content) override {
+        // No subtitles while listening; the state mark shows the mode instead.
+        if (role != nullptr && strcmp(role, "system") != 0 &&
+            Application::GetInstance().GetDeviceState() == kDeviceStateListening) {
+            return;
+        }
         SpiLcdDisplay::SetChatMessage(role, content);
         HideEmoji();
         DisplayLockGuard lock(this);
@@ -180,8 +186,67 @@ private:
     static constexpr int kEyesOffsetY = -20;    // leave a gap above the subtitle
     static constexpr lv_color_t kEyeColor = LV_COLOR_MAKE(0xFF, 0xFF, 0xFF);
 
+    // A small dot below the subtitle tells listening from speaking: steady
+    // teal while listening, slowly breathing amber while speaking, hidden
+    // otherwise. Muted colors so it stays in the background.
+    static constexpr int kStateMarkSize = 8;
+    static constexpr int kStateMarkBottomOff = 40;
+    static constexpr uint32_t kStateMarkTickMs = 100;
+    static constexpr uint32_t kStateMarkBreathMs = 1600;
+    static constexpr lv_color_t kListenMarkColor = LV_COLOR_MAKE(0x2E, 0x8C, 0x7A);
+    static constexpr lv_color_t kSpeakMarkColor = LV_COLOR_MAKE(0xB0, 0x7A, 0x2A);
+
     EyesView eyes_;
     int32_t subtitle_view_height_ = 0;
+    lv_obj_t* state_mark_ = nullptr;
+    DeviceState mark_state_ = kDeviceStateUnknown;
+    uint32_t mark_phase_ms_ = 0;
+
+    // Call with the display lock held.
+    void CreateStateMark() {
+        state_mark_ = lv_obj_create(lv_screen_active());
+        lv_obj_remove_style_all(state_mark_);
+        lv_obj_set_size(state_mark_, kStateMarkSize, kStateMarkSize);
+        lv_obj_set_style_radius(state_mark_, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_opa(state_mark_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(state_mark_, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(state_mark_, LV_ALIGN_BOTTOM_MID, 0, -kStateMarkBottomOff);
+        // Runs in the LVGL task, so it may touch objects without extra locking.
+        lv_timer_create([](lv_timer_t* t) {
+            static_cast<RoundLcdDisplay*>(lv_timer_get_user_data(t))->UpdateStateMark();
+        }, kStateMarkTickMs, this);
+    }
+
+    void UpdateStateMark() {
+        const DeviceState state = Application::GetInstance().GetDeviceState();
+        if (state != mark_state_) {
+            mark_state_ = state;
+            mark_phase_ms_ = 0;
+            if (state == kDeviceStateListening) {
+                lv_obj_set_style_bg_color(state_mark_, kListenMarkColor, 0);
+                lv_obj_set_style_bg_opa(state_mark_, LV_OPA_80, 0);
+                lv_obj_remove_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
+                // The last reply's subtitle made listening look like speaking.
+                if (chat_message_label_ != nullptr) {
+                    lv_anim_delete(chat_message_label_, nullptr);
+                    lv_label_set_text(chat_message_label_, "");
+                }
+            } else if (state == kDeviceStateSpeaking) {
+                lv_obj_set_style_bg_color(state_mark_, kSpeakMarkColor, 0);
+                lv_obj_remove_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+        if (state == kDeviceStateSpeaking) {
+            // Triangle wave between 30% and 90% opacity.
+            mark_phase_ms_ = (mark_phase_ms_ + kStateMarkTickMs) % kStateMarkBreathMs;
+            const uint32_t half = kStateMarkBreathMs / 2;
+            const uint32_t d = mark_phase_ms_ < half ? mark_phase_ms_ : kStateMarkBreathMs - mark_phase_ms_;
+            lv_obj_set_style_bg_opa(state_mark_, LV_OPA_30 + (LV_OPA_90 - LV_OPA_30) * d / half, 0);
+        }
+    }
 
     // Short text sits centered in the viewport; text taller than the viewport
     // waits briefly, then scrolls up once until its last lines are visible.

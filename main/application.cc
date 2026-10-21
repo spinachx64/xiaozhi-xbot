@@ -715,6 +715,17 @@ void Application::InitializeProtocol() {
             bool listen = cJSON_IsBool(auto_listen) ? cJSON_IsTrue(auto_listen) : true;
             ESP_LOGI(TAG, "Speak request, session_id: %s, auto_listen: %d", sid.c_str(), listen);
             Schedule([this, sid, listen]() { HandleSpeakRequest(sid, listen); });
+        } else if (strcmp(type->valuestring, "task_ready") == 0) {
+            // A background task finished during a conversation. Only a short
+            // notice and tone: the user asks for the result when ready, or it
+            // is announced once the device is idle.
+            auto task_id = cJSON_GetObjectItem(root, "task_id");
+            ESP_LOGI(TAG, "Task ready: %s",
+                     cJSON_IsString(task_id) ? task_id->valuestring : "");
+            Schedule([this]() {
+                Board::GetInstance().GetDisplay()->ShowNotification("后台任务已完成", 5000);
+                audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
+            });
         } else if (strcmp(type->valuestring, "alert") == 0) {
             auto status = cJSON_GetObjectItem(root, "status");
             auto message = cJSON_GetObjectItem(root, "message");
