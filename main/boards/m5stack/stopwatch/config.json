@@ -19,6 +19,15 @@
                 "CONFIG_SPIRAM_SPEED_80M=y",
                 "CONFIG_EYES_UI_DEBUG=y"
             ]
+        },
+        {
+            "name": "m5stack-stopwatch-local",
+            "sdkconfig_append": [
+                "CONFIG_SPIRAM=y",
+                "CONFIG_SPIRAM_MODE_OCT=y",
+                "CONFIG_SPIRAM_SPEED_80M=y",
+                "CONFIG_OTA_URL=\"http://10.3.131.74:8989/xiaozhi/ota/\""
+            ]
         }
     ]
 }

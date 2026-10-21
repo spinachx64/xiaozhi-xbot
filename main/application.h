@@ -178,6 +178,7 @@ private:
     void StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles);
     void StopNotification();
     void HandleNotificationFinished(uint32_t playback_id, bool success);
+    void HandleSpeakRequest(const std::string& session_id, bool auto_listen);
 
     // Activation task (runs in background)
     void ActivationTask();

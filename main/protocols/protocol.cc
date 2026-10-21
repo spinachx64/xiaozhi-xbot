@@ -105,6 +105,17 @@ void Protocol::SendMcpMessage(const std::string& payload) {
     SendText(message);
 }
 
+void Protocol::SendSpeakReady(const std::string& session_id, bool ready, bool reuse_existing) {
+    std::string message = "{\"session_id\":\"" + session_id + "\",\"type\":\"speak_ready\"";
+    message += ready ? ",\"state\":\"ready\"" : ",\"state\":\"busy\"";
+    message += ",\"udp_config\":{\"ready\":";
+    message += ready ? "true" : "false";
+    message += ",\"reuse_existing\":";
+    message += reuse_existing ? "true" : "false";
+    message += "}}";
+    SendText(message);
+}
+
 bool Protocol::IsTimeout() const {
     const int kTimeoutSeconds = 120;
     auto now = std::chrono::steady_clock::now();

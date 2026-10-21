@@ -66,6 +66,9 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
+    // Reply to a server speak_request. session_id echoes the request so the
+    // server can match it even when a new hello replaced the session.
+    virtual void SendSpeakReady(const std::string& session_id, bool ready, bool reuse_existing);
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

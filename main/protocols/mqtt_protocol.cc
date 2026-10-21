@@ -235,7 +235,10 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     encrypted.resize(aes_nonce_.size() + packet->payload.size());
     memcpy(encrypted.data(), nonce.data(), nonce.size());
 
-    if (!CryptAesCtr(reinterpret_cast<const uint8_t*>(packet->payload.data()),
+    // A header-only packet (empty payload) has nothing to encrypt; it is sent
+    // to tell the server our UDP address before any audio flows.
+    if (!packet->payload.empty() &&
+        !CryptAesCtr(reinterpret_cast<const uint8_t*>(packet->payload.data()),
                      packet->payload.size(), reinterpret_cast<const uint8_t*>(nonce.data()),
                      reinterpret_cast<uint8_t*>(&encrypted[nonce.size()]))) {
         ESP_LOGE(TAG, "Failed to encrypt audio data");

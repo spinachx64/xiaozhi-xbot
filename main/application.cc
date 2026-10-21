@@ -703,6 +703,15 @@ void Application::InitializeProtocol() {
                     ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
                 }
             }
+        } else if (strcmp(type->valuestring, "speak_request") == 0) {
+            // Server-initiated speech (MQTT+UDP): open the audio channel if
+            // needed, then answer speak_ready; tts start/audio/stop follow.
+            auto session_id = cJSON_GetObjectItem(root, "session_id");
+            auto auto_listen = cJSON_GetObjectItem(root, "auto_listen");
+            std::string sid = cJSON_IsString(session_id) ? session_id->valuestring : "";
+            bool listen = cJSON_IsBool(auto_listen) ? cJSON_IsTrue(auto_listen) : true;
+            ESP_LOGI(TAG, "Speak request, session_id: %s, auto_listen: %d", sid.c_str(), listen);
+            Schedule([this, sid, listen]() { HandleSpeakRequest(sid, listen); });
         } else if (strcmp(type->valuestring, "alert") == 0) {
             auto status = cJSON_GetObjectItem(root, "status");
             auto message = cJSON_GetObjectItem(root, "message");
@@ -1234,6 +1243,51 @@ void Application::StopNotification() {
     if (GetDeviceState() == kDeviceStateNotifying) {
         SetDeviceState(kDeviceStateIdle);
     }
+}
+
+// Runs in the main task. The server only sends speak_request when the device
+// is not in a conversation; any other state answers "busy" and the server
+// retries later.
+void Application::HandleSpeakRequest(const std::string& session_id, bool auto_listen) {
+    if (!protocol_) {
+        return;
+    }
+    auto state = GetDeviceState();
+    if (state == kDeviceStateNotifying) {
+        StopNotification();
+        state = kDeviceStateIdle;
+    }
+    if (state != kDeviceStateIdle && state != kDeviceStateListening &&
+        state != kDeviceStateSpeaking) {
+        ESP_LOGW(TAG, "Speak request rejected in state %d", static_cast<int>(state));
+        protocol_->SendSpeakReady(session_id, false, false);
+        return;
+    }
+
+    const bool reuse = protocol_->IsAudioChannelOpened();
+    if (!reuse) {
+        auto& board = Board::GetInstance();
+        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        if (!protocol_->OpenAudioChannel()) {
+            ESP_LOGE(TAG, "Speak request: failed to open audio channel");
+            board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+            protocol_->SendSpeakReady(session_id, false, false);
+            return;
+        }
+        // The server learns our UDP address from the first packet we send.
+        // In a conversation the microphone does that; here nothing would be
+        // sent, so the server would drop all TTS audio. An empty packet is
+        // enough, and the server discards it while the speak request is pending.
+        for (int i = 0; i < 2; i++) {
+            protocol_->SendAudio(std::make_unique<AudioStreamPacket>());
+        }
+    }
+    if (state == kDeviceStateIdle) {
+        // tts stop returns to idle for one-shot announcements, or keeps
+        // listening when the server wants a follow-up.
+        listening_mode_ = auto_listen ? GetDefaultListeningMode() : kListeningModeManualStop;
+    }
+    protocol_->SendSpeakReady(session_id, true, reuse);
 }
 
 void Application::HandleNotificationFinished(uint32_t playback_id, bool success) {
