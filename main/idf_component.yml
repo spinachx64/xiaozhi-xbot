@@ -1,5 +1,10 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  # Procedural eyes UI (CONFIG_EYES_UI_ENABLED). Pinned to a commit for reproducible builds.
+  eyes:
+    git: https://github.com/spinachx64/eyes-ui-demo.git
+    path: components/eyes
+    version: f5707b330daccb22be32f946922b2f947876eff0
   espressif/ip101:
     version: ^1.1.0
     rules:
