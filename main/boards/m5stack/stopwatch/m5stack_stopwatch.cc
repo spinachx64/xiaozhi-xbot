@@ -144,8 +144,9 @@ public:
     }
 
     void SetChatMessage(const char* role, const char* content) override {
-        // No subtitles while listening; the state mark shows the mode instead.
-        if (role != nullptr && strcmp(role, "system") != 0 &&
+        // While listening only the user's live transcript is shown; a late
+        // assistant subtitle would make listening look like speaking.
+        if (role != nullptr && strcmp(role, "assistant") == 0 &&
             Application::GetInstance().GetDeviceState() == kDeviceStateListening) {
             return;
         }
@@ -186,14 +187,13 @@ private:
     static constexpr int kEyesOffsetY = -20;    // leave a gap above the subtitle
     static constexpr lv_color_t kEyeColor = LV_COLOR_MAKE(0xFF, 0xFF, 0xFF);
 
-    // A small dot below the subtitle tells listening from speaking: steady
-    // teal while listening, slowly breathing amber while speaking, hidden
-    // otherwise. Muted colors so it stays in the background.
+    // A small dot below the subtitle marks speaking: slowly breathing amber,
+    // muted so it stays in the background. Listening is shown by the live
+    // transcript instead, so the dot is hidden then.
     static constexpr int kStateMarkSize = 8;
     static constexpr int kStateMarkBottomOff = 40;
     static constexpr uint32_t kStateMarkTickMs = 100;
     static constexpr uint32_t kStateMarkBreathMs = 1600;
-    static constexpr lv_color_t kListenMarkColor = LV_COLOR_MAKE(0x2E, 0x8C, 0x7A);
     static constexpr lv_color_t kSpeakMarkColor = LV_COLOR_MAKE(0xB0, 0x7A, 0x2A);
 
     EyesView eyes_;
@@ -224,9 +224,8 @@ private:
             mark_state_ = state;
             mark_phase_ms_ = 0;
             if (state == kDeviceStateListening) {
-                lv_obj_set_style_bg_color(state_mark_, kListenMarkColor, 0);
-                lv_obj_set_style_bg_opa(state_mark_, LV_OPA_80, 0);
-                lv_obj_remove_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
+                // The live transcript shows listening; no dot needed.
+                lv_obj_add_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
                 // The last reply's subtitle made listening look like speaking.
                 if (chat_message_label_ != nullptr) {
                     lv_anim_delete(chat_message_label_, nullptr);
