@@ -182,6 +182,11 @@ public:
         if (!start && !pause && !resume) {
             return;
         }
+        // A pause only dims a view that is up; once the view was closed (stop
+        // or idle) only start/resume bring it back.
+        if (pause && !media_active_) {
+            return;
+        }
         if (start) {
             auto empty = [](const char* s) { return s == nullptr || s[0] == '\0'; };
             // Non-book media has only a title: show it in the middle.
