@@ -59,6 +59,18 @@ public:
     virtual bool IsMonochrome() const { return false; }
     virtual bool SupportsGuiOperations() const { return false; }
     virtual void SetHideSubtitle(bool hide) { (void)hide; }
+    // Server "media" message: state is start/pause/resume/stop. book and
+    // chapter are set for book chapters, title for anything else. Boards that
+    // draw playback progress override this; the default ignores it.
+    virtual void SetMediaProgress(const char* state, const char* title, const char* book,
+                                  const char* chapter, uint32_t position_ms, uint32_t duration_ms) {
+        (void)state;
+        (void)title;
+        (void)book;
+        (void)chapter;
+        (void)position_ms;
+        (void)duration_ms;
+    }
     virtual bool InsertAnimDialog(const char* name, uint32_t duration_ms) {
         (void)name;
         (void)duration_ms;

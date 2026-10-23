@@ -683,6 +683,25 @@ void Application::InitializeProtocol() {
                     display->SetChatMessage("user", message.c_str());
                 });
             }
+        } else if (strcmp(type->valuestring, "media") == 0) {
+            auto state = cJSON_GetObjectItem(root, "state");
+            if (!cJSON_IsString(state)) {
+                return;
+            }
+            auto str = [root](const char* key) {
+                auto v = cJSON_GetObjectItem(root, key);
+                return cJSON_IsString(v) ? std::string(v->valuestring) : std::string();
+            };
+            auto ms = [](const cJSON* v) -> uint32_t {
+                return cJSON_IsNumber(v) && v->valuedouble > 0 ? static_cast<uint32_t>(v->valuedouble) : 0;
+            };
+            Schedule([display, state_str = std::string(state->valuestring), title_str = str("title"),
+                      book_str = str("book"), chapter_str = str("chapter"),
+                      position_ms = ms(cJSON_GetObjectItem(root, "position_ms")),
+                      duration_ms = ms(cJSON_GetObjectItem(root, "duration_ms"))]() {
+                display->SetMediaProgress(state_str.c_str(), title_str.c_str(), book_str.c_str(),
+                                          chapter_str.c_str(), position_ms, duration_ms);
+            });
         } else if (strcmp(type->valuestring, "llm") == 0) {
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(emotion)) {

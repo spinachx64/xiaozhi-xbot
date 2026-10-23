@@ -114,6 +114,7 @@ public:
         });
         ApplyFaceStyle();
         CreateStateMark();
+        CreateMediaView();
 #if CONFIG_EYES_UI_DEBUG
         xTaskCreate([](void* arg) { static_cast<RoundLcdDisplay*>(arg)->SnapshotLoop(); },
                     "eyes_snap", 6144, this, 1, nullptr);
@@ -161,6 +162,44 @@ public:
         HideEmoji();
     }
 
+    // Book chapter playback replaces the eyes: book name on top, chapter name
+    // in the middle, remaining time below and a ring along the rim. The
+    // server sends only state changes; the position is extrapolated from
+    // lv_tick in between.
+    void SetMediaProgress(const char* state, const char* title, const char* book,
+                          const char* chapter, uint32_t position_ms, uint32_t duration_ms) override {
+        if (state == nullptr || media_ring_ == nullptr) {
+            return;
+        }
+        DisplayLockGuard lock(this);
+        const bool start = strcmp(state, "start") == 0;
+        const bool pause = strcmp(state, "pause") == 0;
+        const bool resume = strcmp(state, "resume") == 0;
+        if (strcmp(state, "stop") == 0) {
+            CloseMediaView();
+            return;
+        }
+        if (!start && !pause && !resume) {
+            return;
+        }
+        if (start) {
+            auto empty = [](const char* s) { return s == nullptr || s[0] == '\0'; };
+            // Non-book media has only a title: show it in the middle.
+            lv_label_set_text(media_book_, empty(book) ? "" : book);
+            lv_label_set_text(media_chapter_, !empty(chapter) ? chapter : (empty(title) ? "" : title));
+        }
+        if (duration_ms > 0 || start) {
+            media_duration_ms_ = duration_ms;
+        }
+        media_position_ms_ = position_ms;
+        media_anchor_ms_ = lv_tick_get();
+        media_paused_ = pause;
+        // pause/resume without a start (e.g. after a reconnect) still counts.
+        media_active_ = true;
+        ApplyMediaLayout();
+        UpdateMediaView();
+    }
+
     // Always stay on the dark theme; the face style is reapplied on top of it.
     void SetTheme(Theme* theme) override {
         (void)theme;
@@ -202,6 +241,164 @@ private:
     DeviceState mark_state_ = kDeviceStateUnknown;
     uint32_t mark_phase_ms_ = 0;
 
+    static constexpr int kRingInset = 6;          // ring hugs the round edge
+    static constexpr int kRingWidth = 5;
+    static constexpr int32_t kRingRange = 1000;
+    static constexpr uint32_t kMediaTickMs = 1000; // the ring moves <0.5 deg/s
+    static constexpr int kMediaBookTop = 122;      // below the clock line
+    static constexpr int kMediaBookWidth = 260;    // the round chord is narrow up here
+    static constexpr int kMediaChapterWidth = 340;
+    static constexpr int kMediaTimeBottomOff = 80; // where the subtitle sits
+    static constexpr uint32_t kMediaFadeMs = 400;
+    static constexpr lv_color_t kRingTrackColor = LV_COLOR_MAKE(0x26, 0x26, 0x26);
+
+    lv_obj_t* media_ring_ = nullptr;
+    lv_obj_t* media_book_ = nullptr;
+    lv_obj_t* media_chapter_ = nullptr;
+    lv_obj_t* media_time_ = nullptr;
+    bool media_active_ = false;
+    bool media_paused_ = false;
+    uint32_t media_position_ms_ = 0;
+    uint32_t media_duration_ms_ = 0;
+    uint32_t media_anchor_ms_ = 0;
+
+    // Call with the display lock held.
+    void CreateMediaView() {
+        // The labels inherit the screen font instead of caching a font pointer:
+        // SetTextFont() swaps the font once assets load and frees the old one,
+        // which left a dangling pointer here (crash on the first layout).
+        lv_obj_t* screen = lv_screen_active();
+
+        media_ring_ = lv_arc_create(screen);
+        lv_obj_set_size(media_ring_, LV_HOR_RES - 2 * kRingInset, LV_VER_RES - 2 * kRingInset);
+        lv_obj_center(media_ring_);
+        lv_arc_set_rotation(media_ring_, 270);  // start at 12 o'clock, run clockwise
+        lv_arc_set_bg_angles(media_ring_, 0, 360);
+        lv_arc_set_range(media_ring_, 0, kRingRange);
+        lv_arc_set_value(media_ring_, 0);
+        lv_obj_remove_style(media_ring_, nullptr, LV_PART_KNOB);
+        lv_obj_remove_flag(media_ring_, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_opa(media_ring_, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(media_ring_, 0, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(media_ring_, kRingWidth, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(media_ring_, kRingWidth, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(media_ring_, kRingTrackColor, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(media_ring_, kSpeakMarkColor, LV_PART_INDICATOR);
+        lv_obj_add_flag(media_ring_, LV_OBJ_FLAG_HIDDEN);
+
+        // Book name on top (dim), chapter name in the middle where the eyes
+        // were (bright); both scroll right to left when too long.
+        media_book_ = lv_label_create(screen);
+        lv_obj_set_style_text_color(media_book_, lv_color_hex(0x8C8C8C), 0);
+        lv_obj_set_style_text_align(media_book_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(media_book_, kMediaBookWidth);
+        lv_label_set_long_mode(media_book_, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+        lv_label_set_text(media_book_, "");
+        lv_obj_align(media_book_, LV_ALIGN_TOP_MID, 0, kMediaBookTop);
+        lv_obj_add_flag(media_book_, LV_OBJ_FLAG_HIDDEN);
+
+        media_chapter_ = lv_label_create(screen);
+        lv_obj_set_style_text_color(media_chapter_, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_text_align(media_chapter_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(media_chapter_, kMediaChapterWidth);
+        lv_label_set_long_mode(media_chapter_, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+        lv_label_set_text(media_chapter_, "");
+        lv_obj_align(media_chapter_, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_add_flag(media_chapter_, LV_OBJ_FLAG_HIDDEN);
+
+        media_time_ = lv_label_create(screen);
+        lv_obj_set_style_text_color(media_time_, lv_color_hex(0x8C8C8C), 0);
+        lv_label_set_text(media_time_, "");
+        lv_obj_align(media_time_, LV_ALIGN_BOTTOM_MID, 0, -kMediaTimeBottomOff);
+        lv_obj_add_flag(media_time_, LV_OBJ_FLAG_HIDDEN);
+
+        // Runs in the LVGL task, so it may touch objects without extra locking.
+        lv_timer_create([](lv_timer_t* t) {
+            static_cast<RoundLcdDisplay*>(lv_timer_get_user_data(t))->UpdateMediaView();
+        }, kMediaTickMs, this);
+    }
+
+    static void ShowObj(lv_obj_t* obj, bool on, uint32_t fade_ms) {
+        if (obj == nullptr) {
+            return;
+        }
+        const bool hidden = lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        if (on && hidden) {
+            lv_anim_delete(obj, nullptr);
+            lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_fade_in(obj, fade_ms, 0);
+        } else if (!on && !hidden) {
+            // Hide outright: a faded-out object would still take layout and
+            // keep scrolling under the eyes.
+            lv_anim_delete(obj, nullptr);
+            lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // Playing: the reading view replaces the eyes. Paused (the device then
+    // listens or answers): the normal face and transcript come back at once,
+    // with only a dimmed ring left as a hint that the chapter is unfinished.
+    void ApplyMediaLayout() {
+        const bool reading = media_active_ && !media_paused_;
+        for (lv_obj_t* obj : {media_book_, media_chapter_, media_time_}) {
+            ShowObj(obj, reading, kMediaFadeMs / 2);
+        }
+        ShowObj(media_ring_, media_active_, kMediaFadeMs / 2);
+        lv_obj_set_style_arc_opa(media_ring_, reading ? LV_OPA_COVER : LV_OPA_40, LV_PART_INDICATOR);
+        ShowObj(emoji_box_, !reading, kMediaFadeMs);
+        ShowObj(bottom_bar_, !reading, 0);
+        if (reading) {
+            lv_obj_add_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // Back to the default face. Called on "stop" and whenever the device
+    // returns to idle with the view still up (e.g. the session ended while a
+    // chapter was paused, which keeps it on the server for "继续").
+    void CloseMediaView() {
+        if (!media_active_) {
+            return;
+        }
+        media_active_ = false;
+        media_paused_ = false;
+        ApplyMediaLayout();
+        eyes_.SetExpression("idle");
+    }
+
+    static void FormatDuration(char* buf, size_t size, const char* prefix, uint32_t ms) {
+        const uint32_t s = ms / 1000;
+        if (s >= 3600) {
+            snprintf(buf, size, "%s%lu:%02lu:%02lu", prefix, static_cast<unsigned long>(s / 3600),
+                     static_cast<unsigned long>(s / 60 % 60), static_cast<unsigned long>(s % 60));
+        } else {
+            snprintf(buf, size, "%s%02lu:%02lu", prefix, static_cast<unsigned long>(s / 60),
+                     static_cast<unsigned long>(s % 60));
+        }
+    }
+
+    void UpdateMediaView() {
+        if (!media_active_) {
+            return;
+        }
+        uint32_t pos = media_position_ms_;
+        if (!media_paused_) {
+            pos += lv_tick_elaps(media_anchor_ms_);
+        }
+        char text[32];
+        if (media_duration_ms_ > 0) {
+            pos = std::min(pos, media_duration_ms_);
+            lv_arc_set_value(media_ring_, static_cast<int32_t>(
+                static_cast<uint64_t>(pos) * kRingRange / media_duration_ms_));
+            FormatDuration(text, sizeof(text), "剩余 ", media_duration_ms_ - pos);
+        } else {
+            lv_arc_set_value(media_ring_, 0);  // length unknown: count up instead
+            FormatDuration(text, sizeof(text), "已播 ", pos);
+        }
+        if (strcmp(lv_label_get_text(media_time_), text) != 0) {
+            lv_label_set_text(media_time_, text);
+        }
+    }
+
     // Call with the display lock held.
     void CreateStateMark() {
         state_mark_ = lv_obj_create(lv_screen_active());
@@ -223,6 +420,19 @@ private:
         if (state != mark_state_) {
             mark_state_ = state;
             mark_phase_ms_ = 0;
+            if (state == kDeviceStateIdle) {
+                CloseMediaView();
+            }
+            if (state == kDeviceStateListening && media_active_ && !media_paused_) {
+                // A button or wake word interrupted playback; the server's
+                // "pause" may arrive later. Freeze the position and show the
+                // conversation face now so the transcript never overlaps.
+                media_position_ms_ += lv_tick_elaps(media_anchor_ms_);
+                media_anchor_ms_ = lv_tick_get();
+                media_paused_ = true;
+                ApplyMediaLayout();
+                UpdateMediaView();
+            }
             if (state == kDeviceStateListening) {
                 // The live transcript shows listening; no dot needed.
                 lv_obj_add_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
@@ -231,7 +441,8 @@ private:
                     lv_anim_delete(chat_message_label_, nullptr);
                     lv_label_set_text(chat_message_label_, "");
                 }
-            } else if (state == kDeviceStateSpeaking) {
+            } else if (state == kDeviceStateSpeaking && !(media_active_ && !media_paused_)) {
+                // The reading view replaces the dot during chapter playback.
                 lv_obj_set_style_bg_color(state_mark_, kSpeakMarkColor, 0);
                 lv_obj_remove_flag(state_mark_, LV_OBJ_FLAG_HIDDEN);
             } else {
