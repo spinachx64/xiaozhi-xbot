@@ -182,7 +182,7 @@ public:
         if (!start && !pause && !resume) {
             return;
         }
-        // A pause only dims a view that is up; once the view was closed (stop
+        // A pause only hides a view that is up; once the view was closed (stop
         // or idle) only start/resume bring it back.
         if (pause && !media_active_) {
             return;
@@ -341,15 +341,14 @@ private:
     }
 
     // Playing: the reading view replaces the eyes. Paused (the device then
-    // listens or answers): the normal face and transcript come back at once,
-    // with only a dimmed ring left as a hint that the chapter is unfinished.
+    // listens or answers): hide the entire reading view, including the ring,
+    // and restore the normal face and transcript.
     void ApplyMediaLayout() {
         const bool reading = media_active_ && !media_paused_;
         for (lv_obj_t* obj : {media_book_, media_chapter_, media_time_}) {
             ShowObj(obj, reading, kMediaFadeMs / 2);
         }
-        ShowObj(media_ring_, media_active_, kMediaFadeMs / 2);
-        lv_obj_set_style_arc_opa(media_ring_, reading ? LV_OPA_COVER : LV_OPA_40, LV_PART_INDICATOR);
+        ShowObj(media_ring_, reading, kMediaFadeMs / 2);
         ShowObj(emoji_box_, !reading, kMediaFadeMs);
         ShowObj(bottom_bar_, !reading, 0);
         if (reading) {
